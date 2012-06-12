@@ -1,0 +1,4 @@
+; $Id: arxiv.info,v 1.0 $
+name = Arxiv
+description =  Get paper from arxiv.org.
+core = 7.x

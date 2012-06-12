@@ -1,0 +1,344 @@
+<?php
+define('ARXIV_PATH', drupal_get_path('module', 'arxiv'));
+
+function arxiv_field_info() {
+	return array (
+		'arxiv' => array (
+			'label' => t('Arxiv'),
+			'description' => 'This field gets a paper from arxiv.org',
+			'default_widget' => 'text_field',
+			'default_formatter' => 'arxiv_default',
+			'settings' => array (
+				'max_length' => 9
+			),
+
+			
+		),
+
+		
+	);
+}
+
+function arxiv_field_schema($field) {
+	if ($field['type'] == 'arxiv') {
+		$schema = array (
+			'columns' => array (
+				'serialNo' => array (
+					'type' => 'varchar',
+					'length' => 20,
+					'default' => ''
+				),
+				'authors' => array (
+					'type' => 'varchar',
+					'length' => 100,
+					'default' => ''
+				),
+				'abstract' => array (
+					'type' => 'varchar',
+					'length' => 2000,
+					'default' => ''
+				),
+				'pdfUrl' => array (
+					'type' => 'varchar',
+					'length' => 300,
+					'default' => ''
+				),
+				'psUrl' => array (
+					'type' => 'varchar',
+					'length' => 300,
+					'default' => ''
+				),
+				'otherUrl' => array (
+					'type' => 'varchar',
+					'length' => 300,
+					'default' => ''
+				),
+				'downloadNo' => array (
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0,
+					'description' => 'download number'
+				),
+
+				
+			),
+			'indexs' => array (
+				'serialNo'
+			),
+
+			
+		);
+		return $schema;
+	}
+
+}
+
+function _arxiv_field_validate($element, & $form_state) {
+	if ($form_state['complete form']['#form_id'] == 'field_ui_field_edit_form') {
+		return;
+	}
+	$values = $form_state['values'];
+	$language = $values['language'];
+	$field_name = $element['#field_name'];
+	foreach ($values[$field_name][$language] as $delta => $item) {
+		if (!empty ($item['text_field_wrapper']['arxivinfo'])) {
+			$obj = db_select('field_data_' . $field_name, 'm')->fields('m', array (
+				'entity_type',
+				'entity_id'
+			))->condition('m.' .
+			$field_name . '_serialNo', $item['text_field_wrapper']['arxivinfo'])->condition('m.deleted', 0)->execute()->fetchAll();
+			if ($obj)
+				form_set_error($field_name, t('The paper you submitted already exists. Click <a href="/' . $obj[0]->entity_type . '/' . $obj[0]->entity_id . '">here</a> to view it.'));
+			else {
+				include_once (ARXIV_PATH . '/parser/BrowserEmulator.php');
+				$html = BrowserEmulator :: openArxiv($item['text_field_wrapper']['arxivinfo']);
+				if (!$html) {
+					form_set_error($field_name, t('Could not connect to the server. Please try again later.'));
+					return;
+				}
+
+				// serial id doesn't exist
+				if ($html == '' || strpos($html, "Paper identifier " . $item['text_field_wrapper']['arxivinfo'] . " not recognized") !== false || strpos($html, "Paper " . $item['text_field_wrapper']['arxivinfo'] . " doesn't exist") !== false) {
+					form_set_error($field_name, t('The paper you submitted does not exist.'));
+					return;
+				}
+			}
+		}
+		//print_r($item['text_field_wrapper']['arxivinfo']);
+		$new_value = arxiv_get_paper($item['text_field_wrapper']['arxivinfo']);
+		form_set_value($element, $new_value, $form_state);
+	}
+
+}
+function arxiv_field_insert($entity_type, $entity, $field, $instance, $langcode, &$items) {
+	list($id, $vid, $bundle) = entity_extract_ids($entity_type, $entity);
+	$node=node_load($id,$vid);
+	foreach($items as $delta=>$item){
+		$node->title=$item['title'];
+	}
+	
+	node_save($node);
+}
+
+function arxiv_field_widget_info() {
+	return array (
+		'text_field' => array (
+			'label' => t('Text field'),
+			'desscription' => t('Allow the user to enter arxiv serial No.'),
+			'field types' => array (
+				'arxiv'
+			),
+			'settings' => array (
+				'number' => ''
+			),
+			'behaviors' => array (
+				'multiple values' => FIELD_BEHAVIOR_DEFAULT,
+				'default value' => FIELD_BEHAVIOR_CUSTOM,
+
+				
+			),
+
+			
+		),
+
+		
+	);
+}
+function arxiv_field_widget_settings_form($field, $instance) {
+	$form = array ();
+	$widget = $instance['widget'];
+	$settings = $widget['settings'];
+	if ($widget['type'] == 'text_field') {
+		$form['number'] = array (
+			'#type' => 'textfield',
+			'#title' => t('Serial No'),
+			'#required' => TRUE,
+			'#default_value' => $settings['number'],
+
+			
+		);
+	}
+	return $form;
+}
+
+function arxiv_field_widget_form(& $form, & $form_state, $field, $instance, $langcode, $items, $delta, $element) {
+	$base = $element;
+
+	if ($instance['widget']['type'] == 'text_field') {
+		$element['#element_validate'] = array (
+			'_arxiv_field_validate'
+		);
+		$default = NULL;
+		if (isset ($items[$delta])) {
+			$item = $items[$delta];
+			$default = $item['serialNo'];
+		}
+		$element['text_field_wrapper']['#theme'] = 'text_field_wrapper';
+		$element['text_field_wrapper']['arxivinfo'] = array (
+			'#type' => 'textfield',
+			'#default_value' => $default,
+			'#number' => $instance['widget']['settings']['number'],
+
+			
+		) + $base;
+	}
+	return $element;
+}
+
+function arxiv_field_formatter_info() {
+	return array (
+		'arxiv_default' => array (
+			'label' => t('Default'),
+			'field types' => array (
+				'arxiv'
+			),
+
+			
+		),
+		'arxiv_plain' => array (
+			'label' => t('Plain text'),
+			'field types' => array (
+				'arxiv'
+			),
+
+			
+		),
+
+		
+	);
+}
+
+function arxiv_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+	$element = array ();
+
+	switch ($display['type']) {
+		case 'arxiv_default' :
+			foreach ($items as $delta => $item) {
+				$output = '<div class="arxiv"><p>' . $item['authors'] . '</p><p>' . $item['abstract'] . '</p><p>';
+				if ($item['pdfUrl'] != '') {
+					$output .= '<a href=' . $item['pdfUrl'] . '>pdf </a>';
+				}
+				if ($item['psUrl'] != '') {
+					$output .= '<a href=' . $item['psUrl'] . '>ps </a>';
+				}
+				if ($item['otherUrl'] != '') {
+					$output .= '<a href=' . $item['otherUrl'] . '>other </a>';
+				}
+				$output .= '</p></div>';
+				$element[$delta] = array (
+					'#markup' => $output
+				);
+			}
+
+			break;
+
+		case 'arxiv_plain' :
+			foreach ($items as $delta => $item) {
+				$output = '<div class="arxiv"><p>' . $item['authors'] . '</p><p>';
+				if ($item['pdfUrl'] != '') {
+					$output .= '<a href=' . $item['pdfUrl'] . '>pdf </a>';
+				}
+				if ($item['psUrl'] != '') {
+					$output .= '<a href=' . $item['psUrl'] . '>ps </a>';
+				}
+				if ($item['otherUrl'] != '') {
+					$output .= '<a href=' . $item['otherUrl'] . '>other </a>';
+				}
+				$output .= '</p></div>';
+				$element[$delta] = array (
+					'#markup' => $output
+				);
+			}
+			break;
+	}
+
+	return $element;
+}
+
+function arxiv_field_is_empty($item, $field) {
+	if ($field['type'] == 'arxiv') {
+		if (!isset ($item['serialNo']) || $item['serialNo'] === '') {
+			return true;
+		}
+	}
+	return FALSE;
+}
+
+
+function arxiv_get_paper($serialNo) {
+	include_once (ARXIV_PATH . '/parser/HtmlDom.php');
+	include_once (ARXIV_PATH . '/parser/BrowserEmulator.php');
+	$html = BrowserEmulator :: openArxiv($serialNo);
+	$item = array (
+		'serialNo' => $serialNo
+	);
+	$dom = str_get_html($html);
+	$fulltext = $dom->find('.full-text');
+	$lis = $fulltext[0]->find('li');
+	foreach ($lis as $li) {
+		if (strpos($li, 'PDF') !== false) {
+			$item['pdfUrl'] = 'http://arxiv.org' . $li->children[0]->attr['href'];
+		}
+		if (strpos($li, 'PostScript') !== false) {
+			$item['psUrl'] = 'http://arxiv.org' . $li->children[0]->attr['href'];
+		}
+		if (strpos($li, 'Other') !== false) {
+			$item['psUrl'] = 'http://arxiv.org' . $li->children[0]->attr['href'];
+		}
+	}
+
+	// 2) title
+	$titles = $dom->find('.title');
+	$arxivTitle = $titles[0]->innerText();
+	$arxivTitle = substr($arxivTitle, strpos($arxivTitle, '</span>') + 7); // 7 is the length of '</span>'
+	$arxivTitle = html_entity_decode($arxivTitle, ENT_QUOTES, 'utf-8');
+
+	// 3) authors
+	$authors = $dom->find('.authors');
+	$authors = $authors[0]->children;
+	$arxivAuthor = '';
+	for ($i = 1; $i < sizeof($authors) - 1; $i++)
+		$arxivAuthor .= $authors[$i]->innerText() . ', ';
+	$arxivAuthor .= $authors[sizeof($authors) - 1]->innerText();
+	$arxivAuthor = html_entity_decode($arxivAuthor, ENT_QUOTES, 'utf-8');
+
+	// 4) abstract
+	$abstracts = $dom->find('.abstract');
+
+	foreach ($abstracts[0]->find('a') as $a) {
+		$a->outertext = $a->innertext;
+	}
+	$arxivAbstract = $abstracts[0]->innerText();
+	$arxivAbstract = substr($arxivAbstract, strpos($arxivAbstract, '</span>') + 7); // 7 is the length of '</span>'
+	$arxivAbstract = html_entity_decode($arxivAbstract, ENT_QUOTES, 'utf-8');
+	
+	if (strlen($arxivAuthor) > 100) {
+				$arxivAuthor=substr($arxivAuthor,0,95).'...';
+			}
+			if (strlen($arxivAbstract) > 2000) {
+				$arxivAbstract=substr($arxivAbstract,0,1995).'...';
+			}
+			if (strlen($arxivTitle) > 255) {
+				$arxivTitle=substr($arxivTitle,0,250).'...';
+			}
+
+
+	$item['title'] = $arxivTitle;
+	$item['authors'] = $arxivAuthor;
+	$item['abstract'] = $arxivAbstract;
+	$item['downloadNo'] = 0;
+	return $item;
+}
+
+function arxiv_form_node_form_alter(&$form, &$form_state, $form_id) {
+ foreach($form_state['field'] as $type=>$name){
+ 	if($form_state['field'][$type]['und']['instance']['widget']['module']=='arxiv'){
+ 		$form['title']['#value'] = 'ant';
+    $form['title']['#type'] = 'value';
+    $form['title']['#required'] = FALSE;
+    break;
+ 	}
+ }   
+
+}
